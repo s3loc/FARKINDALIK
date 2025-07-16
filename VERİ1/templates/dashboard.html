@@ -1,0 +1,277 @@
+<!-- templates/dashboard.html -->
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>REDHACK Sentinel - Kablosuz Keşif Paneli</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --dark-bg: #0f0f15;
+            --card-bg: #1a1a2e;
+            --accent: #ff4d4d;
+            --text: #e6e6ff;
+            --warning: #ffcc00;
+        }
+        body {
+            background-color: var(--dark-bg);
+            color: var(--text);
+            font-family: 'Courier New', monospace;
+            margin: 0;
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            padding: 20px;
+            border-bottom: 2px solid var(--accent);
+            margin-bottom: 30px;
+        }
+        .grid-container {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+        }
+        .card {
+            background: var(--card-bg);
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+        .device-list {
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        .device-item {
+            padding: 15px;
+            border-bottom: 1px solid #33334d;
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr 1fr;
+            align-items: center;
+        }
+        .device-header {
+            font-weight: bold;
+            background: #252540;
+            position: sticky;
+            top: 0;
+        }
+        .wifi { color: #4da6ff; }
+        .bluetooth { color: #ff79c6; }
+        .signal-bar {
+            height: 10px;
+            background: #333;
+            border-radius: 5px;
+            margin-top: 5px;
+        }
+        .signal-fill {
+            height: 100%;
+            border-radius: 5px;
+            background: linear-gradient(90deg, #ff3300, #ffcc00, #33cc33);
+        }
+        .status-active {
+            color: #33cc33;
+            font-weight: bold;
+        }
+        .status-inactive {
+            color: #ff3300;
+            font-weight: bold;
+        }
+        .notification {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 15px;
+            background: var(--accent);
+            color: white;
+            border-radius: 5px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>REDHACK SENTINEL</h1>
+        <p>Kablosuz Ağ Farkındalık ve İzleme Paneli</p>
+    </div>
+
+    <div class="grid-container">
+        <div class="card">
+            <h2>Cihaz Keşif Listesi</h2>
+            <div class="device-list">
+                <div class="device-item device-header">
+                    <div>Cihaz Adı</div>
+                    <div>MAC Adresi</div>
+                    <div>Sinyal Gücü</div>
+                    <div>Son Görülme</div>
+                </div>
+                <div id="device-list-container">
+                    <!-- Dinamik olarak doldurulacak -->
+                </div>
+            </div>
+        </div>
+
+        <div>
+            <div class="card">
+                <h2>Bluetooth Durumu</h2>
+                <div id="bt-toggle-container">
+                    <button id="bt-toggle" class="status-active">Bluetooth: AKTİF</button>
+                </div>
+                <h3>Durum Geçmişi</h3>
+                <div id="bt-history">
+                    <!-- Dinamik olarak doldurulacak -->
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Sinyal Gücü Analizi</h2>
+                <canvas id="rssi-chart" height="300"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div id="vulnerability-alert" class="notification">
+        UYARI: Bluetooth'unuz aktif ve savunmasız durumda!
+    </div>
+
+    <script>
+        // Global değişkenler
+        let currentDeviceId = null;
+        const rssiChart = new Chart(
+            document.getElementById('rssi-chart'),
+            {
+                type: 'line',
+                data: { datasets: [{ label: 'RSSI (dBm)', data: [] }] },
+                options: { 
+                    responsive: true,
+                    scales: { y: { suggestedMin: -100, suggestedMax: -30 } }
+                }
+            }
+        );
+
+        // Cihaz listesini güncelle
+        function updateDeviceList() {
+            fetch('/api/devices')
+                .then(response => response.json())
+                .then(devices => {
+                    const container = document.getElementById('device-list-container');
+                    container.innerHTML = '';
+                    
+                    devices.forEach(device => {
+                        const item = document.createElement('div');
+                        item.className = 'device-item';
+                        item.dataset.id = device.id;
+                        
+                        // Sinyal gücü görselleştirme
+                        const signalPercent = Math.min(100, Math.max(0, (device.rssi + 100) * 1.5));
+                        const signalBar = `
+                            <div>${device.rssi} dBm</div>
+                            <div class="signal-bar">
+                                <div class="signal-fill" style="width:${signalPercent}%"></div>
+                            </div>
+                        `;
+                        
+                        item.innerHTML = `
+                            <div class="${device.type}">${device.name || 'Bilinmeyen'}</div>
+                            <div>${device.mac}</div>
+                            ${signalBar}
+                            <div>${new Date(device.last_seen).toLocaleTimeString()}</div>
+                        `;
+                        
+                        item.addEventListener('click', () => {
+                            currentDeviceId = device.id;
+                            document.querySelectorAll('.device-item').forEach(el => {
+                                el.style.background = '';
+                            });
+                            item.style.background = '#252540';
+                            updateChart();
+                        });
+                        
+                        container.appendChild(item);
+                    });
+                });
+        }
+
+        // Bluetooth durumunu güncelle
+        function updateBluetoothStatus() {
+            fetch('/api/bluetooth_history?limit=1')
+                .then(response => response.json())
+                .then(history => {
+                    if (history.length > 0) {
+                        const status = history[0].status;
+                        const button = document.getElementById('bt-toggle');
+                        button.textContent = `Bluetooth: ${status === 'active' ? 'AKTİF' : 'PASİF'}`;
+                        button.className = status === 'active' ? 'status-active' : 'status-inactive';
+                        
+                        // Güvenlik uyarısı
+                        if (status === 'active') {
+                            document.getElementById('vulnerability-alert').style.display = 'block';
+                        }
+                    }
+                });
+        }
+
+        // Bluetooth geçmişini güncelle
+        function updateBluetoothHistory() {
+            fetch('/api/bluetooth_history')
+                .then(response => response.json())
+                .then(history => {
+                    const container = document.getElementById('bt-history');
+                    container.innerHTML = '';
+                    
+                    history.forEach(entry => {
+                        const entryEl = document.createElement('div');
+                        entryEl.className = 'history-item';
+                        entryEl.innerHTML = `
+                            <span class="${entry.status === 'active' ? 'status-active' : 'status-inactive'}">
+                                ${entry.status === 'active' ? 'AKTİF' : 'PASİF'}
+                            </span>
+                            - ${new Date(entry.timestamp).toLocaleString()}
+                        `;
+                        container.appendChild(entryEl);
+                    });
+                });
+        }
+
+        // Grafiği güncelle
+        function updateChart() {
+            if (!currentDeviceId) return;
+            
+            fetch(`/api/rssi_history/${currentDeviceId}`)
+                .then(response => response.json())
+                .then(history => {
+                    const data = history.map(entry => ({
+                        x: new Date(entry.timestamp),
+                        y: entry.rssi
+                    })).reverse();
+                    
+                    rssiChart.data.datasets[0].data = data;
+                    rssiChart.update();
+                });
+        }
+
+        // Bluetooth durum değiştirme
+        document.getElementById('bt-toggle').addEventListener('click', () => {
+            const currentStatus = document.getElementById('bt-toggle').textContent.includes('AKTİF');
+            fetch('/toggle_bluetooth', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: !currentStatus })
+            }).then(() => {
+                updateBluetoothStatus();
+                updateBluetoothHistory();
+            });
+        });
+
+        // Periyodik güncellemeler
+        setInterval(updateDeviceList, 3000);
+        setInterval(updateBluetoothStatus, 5000);
+        setInterval(updateBluetoothHistory, 10000);
+        setInterval(updateChart, 5000);
+        
+        // İlk yükleme
+        updateDeviceList();
+        updateBluetoothStatus();
+        updateBluetoothHistory();
+    </script>
+</body>
+</html>
